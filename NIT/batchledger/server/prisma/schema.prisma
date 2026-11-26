@@ -1,0 +1,487 @@
+// BatchLedger – Prisma Schema
+// Database: SQLite (local, no cloud needed)
+// All monetary values stored as Float (decimal-safe via Decimal.js in app layer)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./batchledger.db"
+}
+
+// ─── ENUMS (emulated via String in SQLite) ───────────────────────────────────
+
+// Role: ADMIN | SALESMAN | PRODUCTION_SUPERVISOR | AUDITOR
+// OrderStatus: DRAFT | PENDING_APPROVAL | APPROVED | DISPATCHED | CANCELLED
+// InvoiceStatus: DRAFT | POSTED | CANCELLED | CREDIT_NOTE
+// ProductionStatus: PLANNED | IN_PROGRESS | COMPLETED | CANCELLED
+// MovementType: PURCHASE | PRODUCTION_ISSUE | PRODUCTION_RETURN | SALE | ADJUSTMENT | OPENING
+// PaymentStatus: UNPAID | PARTIAL | PAID
+
+// ─── USERS ───────────────────────────────────────────────────────────────────
+
+model User {
+  id           Int      @id @default(autoincrement())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   // ADMIN | SALESMAN | PRODUCTION_SUPERVISOR | AUDITOR | CUSTOMER
+  customerId   Int?     @unique
+  customer     Customer? @relation(fields: [customerId], references: [id])
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  ordersCreated     Order[]           @relation("OrderCreatedBy")
+  ordersApproved    Order[]           @relation("OrderApprovedBy")
+  invoicesCreated   Invoice[]
+  productionRuns    ProductionRun[]
+  purchasesCreated  Purchase[]
+  paymentsCreated   Payment[]
+  auditLogs         AuditLog[]
+  expensesCreated   ProductionExpense[]
+
+  @@map("users")
+}
+
+// ─── MASTER DATA ─────────────────────────────────────────────────────────────
+
+model Customer {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  gstNumber   String?
+  state       String   // e.g. "Tamil Nadu", "Karnataka"
+  stateCode   String   // e.g. "33", "29"
+  address     String?
+  phone       String?
+  email       String?
+  creditLimit Float    @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orders    Order[]
+  invoices  Invoice[]
+  payments  Payment[]
+  portalAccount User?
+
+  @@map("customers")
+}
+
+model Supplier {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  gstNumber String?
+  state     String?
+  address   String?
+  phone     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchases Purchase[]
+
+  @@map("suppliers")
+}
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  description String?
+  unit        String   // e.g. "packet", "kg", "L"
+  gstRate     Float    @default(5)  // percentage
+  hsnCode     String?
+  sellingPrice Float   @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orderItems       OrderItem[]
+  invoiceItems     InvoiceItem[]
+  productionRuns   ProductionRun[]
+  boms             Bom[]
+  stockMovements   StockMovement[]  @relation("FinishedGoodMovements")
+
+  @@map("products")
+}
+
+model Material {
+  id              Int      @id @default(autoincrement())
+  code            String   @unique
+  name            String
+  unit            String   // e.g. "kg", "L", "pcs"
+  reorderLevel    Float    @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  bomItems         BomItem[]
+  purchaseItems    PurchaseItem[]
+  stockMovements   StockMovement[]  @relation("MaterialMovements")
+  productionIssues ProductionIssue[]
+
+  @@map("materials")
+}
+
+// ─── BILL OF MATERIALS ───────────────────────────────────────────────────────
+
+model Bom {
+  id          Int      @id @default(autoincrement())
+  product     Product  @relation(fields: [productId], references: [id])
+  productId   Int
+  batchSize   Float    // standard output units per batch (e.g. 200 packets)
+  version     Int      @default(1)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items          BomItem[]
+  productionRuns ProductionRun[]
+
+  @@unique([productId, version])
+  @@map("boms")
+}
+
+model BomItem {
+  id          Int      @id @default(autoincrement())
+  bom         Bom      @relation(fields: [bomId], references: [id])
+  bomId       Int
+  material    Material @relation(fields: [materialId], references: [id])
+  materialId  Int
+  quantity    Float    // per batch
+  unit        String
+
+  @@unique([bomId, materialId])
+  @@map("bom_items")
+}
+
+// ─── PURCHASES ───────────────────────────────────────────────────────────────
+
+model Purchase {
+  id            Int      @id @default(autoincrement())
+  purchaseNo    String   @unique
+  supplier      Supplier @relation(fields: [supplierId], references: [id])
+  supplierId    Int
+  purchaseDate  DateTime
+  status        String   @default("POSTED")  // DRAFT | POSTED | CANCELLED
+  totalAmount   Float    @default(0)
+  notes         String?
+  createdBy     User     @relation(fields: [createdById], references: [id])
+  createdById   Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items PurchaseItem[]
+
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id          Int      @id @default(autoincrement())
+  purchase    Purchase @relation(fields: [purchaseId], references: [id])
+  purchaseId  Int
+  material    Material @relation(fields: [materialId], references: [id])
+  materialId  Int
+  quantity    Float
+  unitPrice   Float
+  totalPrice  Float
+
+  @@map("purchase_items")
+}
+
+// ─── STOCK ───────────────────────────────────────────────────────────────────
+
+model StockLedger {
+  id           Int      @id @default(autoincrement())
+  materialId   Int?     // null if finished good
+  productId    Int?     // null if raw material
+  currentQty   Float    @default(0)
+  avgCost      Float    @default(0)  // weighted-average cost per unit
+
+  @@unique([materialId])
+  @@unique([productId])
+  @@map("stock_ledger")
+}
+
+model StockMovement {
+  id             Int      @id @default(autoincrement())
+  movementType   String   // PURCHASE | PRODUCTION_ISSUE | PRODUCTION_RETURN | SALE | ADJUSTMENT | OPENING
+  referenceId    Int?     // purchaseId / productionRunId / orderId etc.
+  referenceType  String?  // "Purchase" | "ProductionRun" | "Order" etc.
+
+  // For raw material movements
+  material       Material? @relation("MaterialMovements", fields: [materialId], references: [id])
+  materialId     Int?
+
+  // For finished good movements
+  product        Product?  @relation("FinishedGoodMovements", fields: [productId], references: [id])
+  productId      Int?
+
+  quantity       Float    // positive = IN, negative = OUT
+  unitCost       Float    @default(0)
+  totalCost      Float    @default(0)
+  balanceQty     Float    // running balance after this movement
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  @@map("stock_movements")
+}
+
+// ─── PRODUCTION ───────────────────────────────────────────────────────────────
+
+model ProductionRun {
+  id              Int      @id @default(autoincrement())
+  batchNo         String   @unique
+  bom             Bom      @relation(fields: [bomId], references: [id])
+  bomId           Int
+  product         Product  @relation(fields: [productId], references: [id])
+  productId       Int
+  plannedOutput   Float    // packets planned
+  actualOutput    Float    @default(0)   // good packets
+  damagedQty      Float    @default(0)   // damaged / rejected
+  status          String   @default("PLANNED")  // PLANNED | IN_PROGRESS | COMPLETED | CANCELLED
+  productionDate  DateTime
+  completedAt     DateTime?
+  notes           String?
+  supervisor      User     @relation(fields: [supervisorId], references: [id])
+  supervisorId    Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  issues    ProductionIssue[]
+  expenses  ProductionExpense[]
+  variances ProductionVariance[]
+
+  @@map("production_runs")
+}
+
+model ProductionIssue {
+  id              Int           @id @default(autoincrement())
+  productionRun   ProductionRun @relation(fields: [productionRunId], references: [id])
+  productionRunId Int
+  material        Material      @relation(fields: [materialId], references: [id])
+  materialId      Int
+  standardQty     Float         // from BOM * batches
+  actualQty       Float         // what was really used
+  returnedQty     Float         @default(0)
+  netQty          Float         // actualQty - returnedQty
+  unitCost        Float         // avg cost at time of issue
+  totalCost       Float
+
+  @@map("production_issues")
+}
+
+model ProductionExpense {
+  id              Int           @id @default(autoincrement())
+  productionRun   ProductionRun @relation(fields: [productionRunId], references: [id])
+  productionRunId Int
+  expenseType     String        // LABOUR | POWER | GAS | OTHER
+  description     String?
+  amount          Float
+  createdBy       User          @relation(fields: [createdById], references: [id])
+  createdById     Int
+  createdAt       DateTime      @default(now())
+
+  @@map("production_expenses")
+}
+
+model ProductionVariance {
+  id              Int           @id @default(autoincrement())
+  productionRun   ProductionRun @relation(fields: [productionRunId], references: [id])
+  productionRunId Int
+  varianceType    String        // YIELD | MATERIAL
+  materialId      Int?
+  standardQty     Float
+  actualQty       Float
+  variancePct     Float         // (actual - standard) / standard * 100
+  isFlagged       Boolean       @default(false)  // flagged if abs(variancePct) > 3%
+  notes           String?
+
+  @@map("production_variances")
+}
+
+// ─── SALES ORDERS ────────────────────────────────────────────────────────────
+
+model Order {
+  id            Int      @id @default(autoincrement())
+  orderNo       String   @unique
+  customer      Customer @relation(fields: [customerId], references: [id])
+  customerId    Int
+  orderDate     DateTime
+  requiredDate  DateTime?
+  status        String   @default("DRAFT")  // DRAFT | PENDING_APPROVAL | APPROVED | DISPATCHED | CANCELLED
+  totalAmount   Float    @default(0)
+  notes         String?
+  createdBy     User     @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  createdById   Int
+  approvedBy    User?    @relation("OrderApprovedBy", fields: [approvedById], references: [id])
+  approvedById  Int?
+  approvedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items     OrderItem[]
+  invoices  Invoice[]
+  dispatches Dispatch[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id          Int      @id @default(autoincrement())
+  order       Order    @relation(fields: [orderId], references: [id])
+  orderId     Int
+  product     Product  @relation(fields: [productId], references: [id])
+  productId   Int
+  orderedQty  Float
+  availableQty Float   @default(0)   // stock available at order time
+  shortageQty Float    @default(0)   // orderedQty - availableQty if stock insufficient
+  unitPrice   Float
+  totalPrice  Float
+
+  @@map("order_items")
+}
+
+// ─── GST INVOICES ────────────────────────────────────────────────────────────
+
+model Invoice {
+  id              Int      @id @default(autoincrement())
+  invoiceNo       String   @unique
+  order           Order    @relation(fields: [orderId], references: [id])
+  orderId         Int
+  customer        Customer @relation(fields: [customerId], references: [id])
+  customerId      Int
+  invoiceDate     DateTime
+  status          String   @default("DRAFT")  // DRAFT | POSTED | CANCELLED | CREDIT_NOTE
+  
+  // GST fields
+  taxableAmount   Float    @default(0)
+  cgst            Float    @default(0)
+  sgst            Float    @default(0)
+  igst            Float    @default(0)
+  totalGst        Float    @default(0)
+  grandTotal      Float    @default(0)
+  isInterState    Boolean  @default(false)  // IGST if true, CGST+SGST if false
+  
+  // Payment tracking
+  amountPaid      Float    @default(0)
+  amountDue       Float    @default(0)
+  paymentStatus   String   @default("UNPAID")  // UNPAID | PARTIAL | PAID
+
+  cancelledAt     DateTime?
+  cancelReason    String?
+  creditNoteRef   String?
+  
+  notes           String?
+  createdBy       User     @relation(fields: [createdById], references: [id])
+  createdById     Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items     InvoiceItem[]
+  payments  Payment[]
+  dispatches Dispatch[]
+
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id            Int      @id @default(autoincrement())
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id])
+  invoiceId     Int
+  product       Product  @relation(fields: [productId], references: [id])
+  productId     Int
+  quantity      Float
+  unitPrice     Float
+  taxableAmount Float
+  gstRate       Float
+  cgst          Float    @default(0)
+  sgst          Float    @default(0)
+  igst          Float    @default(0)
+  totalAmount   Float
+
+  @@map("invoice_items")
+}
+
+// ─── DISPATCH ────────────────────────────────────────────────────────────────
+
+model Dispatch {
+  id              Int      @id @default(autoincrement())
+  dispatchNo      String   @unique
+  order           Order    @relation(fields: [orderId], references: [id])
+  orderId         Int
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id])
+  invoiceId       Int
+  dispatchDate    DateTime
+  vehicleNo       String?
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  items DispatchItem[]
+
+  @@map("dispatches")
+}
+
+model DispatchItem {
+  id           Int      @id @default(autoincrement())
+  dispatch     Dispatch @relation(fields: [dispatchId], references: [id])
+  dispatchId   Int
+  productId    Int
+  quantity     Float
+
+  @@map("dispatch_items")
+}
+
+// ─── PAYMENTS ────────────────────────────────────────────────────────────────
+
+model Payment {
+  id            Int      @id @default(autoincrement())
+  paymentNo     String   @unique
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id])
+  invoiceId     Int
+  customer      Customer @relation(fields: [customerId], references: [id])
+  customerId    Int
+  paymentDate   DateTime
+  amount        Float
+  mode          String   // CASH | BANK_TRANSFER | CHEQUE | UPI
+  referenceNo   String?
+  notes         String?
+  createdBy     User     @relation(fields: [createdById], references: [id])
+  createdById   Int
+  createdAt     DateTime @default(now())
+
+  @@map("payments")
+}
+
+// ─── AUDIT LOG ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  user        User?    @relation(fields: [userId], references: [id])
+  userId      Int?
+  action      String   // CREATE | UPDATE | DELETE | LOGIN | LOGOUT | APPROVE | CANCEL
+  entity      String   // "Order" | "Invoice" | "Payment" etc.
+  entityId    Int?
+  oldValues   String?  // JSON string
+  newValues   String?  // JSON string
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+// ─── SYSTEM CONFIG ───────────────────────────────────────────────────────────
+
+model SystemConfig {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value String
+
+  @@map("system_config")
+}
