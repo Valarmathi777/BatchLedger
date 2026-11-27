@@ -19,13 +19,33 @@ BatchLedger is a local-first ERP for small food manufacturers. It connects multi
 - Admin-managed staff accounts with bcrypt password hashes and revocable, HttpOnly sessions
 - SQLite database for local development
 
+## Technology stack
+
+- **Web client:** React 18, React Router, Vite, Tailwind CSS, Axios, and Recharts
+- **API:** Node.js (ES modules), Express, express-validator, and express-rate-limit
+- **Database:** SQLite with Prisma ORM and Prisma Client
+- **Authentication:** JWT-backed HttpOnly cookies and bcryptjs password hashing
+- **Testing:** Jest and Supertest
+
 ## Project layout
 
 ```text
 NIT/batchledger/
-  client/   React, Vite, Tailwind CSS
-  server/   Express API, Prisma, SQLite
+  client/                         React application and Vite configuration
+  server/
+    src/                          Express API, routes, middleware, and services
+    prisma/schema.prisma          Database schema
+    prisma/migrations/             Versioned SQL migrations
+    tests/                        Jest and Supertest API tests
 ```
+
+## Database schema and migrations
+
+`server/prisma/schema.prisma` is the source of truth for the SQLite schema. The initial migration in `server/prisma/migrations/` creates the tables, relations, indexes, and constraints for users, customers, sellers, products, materials, BOMs, stock, production, orders, invoices, payments, dispatch, notifications, messages, and audit history.
+
+For a **new database**, run `npm run db:migrate` to apply the checked-in migrations. After changing the Prisma schema during development, create a named migration with `npm run db:migrate -- --name descriptive_change`. For deployment, use `npm run db:migrate:deploy`. `npm run db:push` remains available for disposable prototypes, but it does not create migration history; don't mix it with migrations on the same database.
+
+If you already have a non-empty `batchledger.db` created with `db:push`, back it up and verify it matches the current Prisma schema before adopting migrations. Only then baseline the existing database from the server directory with `npx prisma migrate resolve --applied 20261127103200_init`. Do not apply the initial migration directly to a database that already contains these tables.
 
 ## Requirements
 
@@ -35,6 +55,7 @@ NIT/batchledger/
 ## Run locally (Windows PowerShell)
 
 Open two PowerShell terminals from the repository root.
+The steps below assume a fresh database. If `server/prisma/batchledger.db` already exists from an earlier `db:push` setup, follow the baseline instructions above before running migrations.
 
 ### 1. Set up and start the API
 
@@ -42,12 +63,12 @@ Open two PowerShell terminals from the repository root.
 Set-Location .\NIT\batchledger\server
 npm ci
 npm run db:generate
-npm run db:push
+npm run db:migrate
 $env:INITIAL_ADMIN_NAME = "Your Name"
 $env:INITIAL_ADMIN_EMAIL = "you@example.com"
 $env:INITIAL_ADMIN_PASSWORD = "Choose-a-unique-password-12-chars-or-longer"
 npm run db:seed
-$env:PORT = "5001"
+$env:PORT = "5000"
 $secret = [Environment]::GetEnvironmentVariable("JWT_SECRET", "User")
 if (-not $secret) {
   $secret = node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
