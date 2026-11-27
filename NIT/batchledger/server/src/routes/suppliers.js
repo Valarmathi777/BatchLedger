@@ -3,7 +3,7 @@ import prisma from '../utils/prisma.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
-router.use(authenticate);
+router.use(authenticate, authorize('ADMIN'));
 
 router.get('/', async (req, res, next) => {
   try {

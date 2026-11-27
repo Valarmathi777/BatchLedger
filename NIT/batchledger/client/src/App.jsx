@@ -22,6 +22,7 @@ import Reports from './pages/app/Reports';
 import AuditLog from './pages/app/AuditLog';
 import UserManagement from './pages/app/UserManagement';
 import CustomerPortal from './pages/CustomerPortal';
+import SellerDashboard from './pages/SellerDashboard';
 
 export default function App() {
   return (
@@ -34,6 +35,11 @@ export default function App() {
           <Route path="/customer" element={
             <ProtectedRoute roles={['CUSTOMER']}>
               <CustomerPortal />
+            </ProtectedRoute>
+          } />
+          <Route path="/seller" element={
+            <ProtectedRoute roles={['SELLER']}>
+              <SellerDashboard />
             </ProtectedRoute>
           } />
 
@@ -61,7 +67,7 @@ export default function App() {
             <Route path="payments" element={<ProtectedRoute roles={['ADMIN','SALESMAN']}><Payments /></ProtectedRoute>} />
 
             {/* Analytics */}
-            <Route path="stock" element={<StockLedger />} />
+            <Route path="stock" element={<ProtectedRoute roles={['ADMIN', 'AUDITOR', 'PRODUCTION_SUPERVISOR']}><StockLedger /></ProtectedRoute>} />
             <Route path="reports" element={<ProtectedRoute roles={['ADMIN','AUDITOR']}><Reports /></ProtectedRoute>} />
             <Route path="audit" element={<ProtectedRoute roles={['ADMIN','AUDITOR']}><AuditLog /></ProtectedRoute>} />
 

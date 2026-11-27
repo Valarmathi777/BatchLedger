@@ -9,7 +9,7 @@ import './landing/landing.css';
 
 const portals = [
   { key: 'owner', label: 'Owner / Admin portal', desc: 'Full business overview and every module', icon: <BarChart3 size={22} />, path: '/login?portal=owner' },
-  { key: 'producer', label: 'Production portal', desc: 'Recipes, production runs and costing', icon: <Factory size={22} />, path: '/login?portal=producer' },
+  { key: 'producer', label: 'Producer / Seller portal', desc: 'Orders, inventory, production, invoices and dispatch', icon: <Factory size={22} />, path: '/login?portal=producer' },
   { key: 'customer', label: 'Customer portal', desc: 'Place orders and track your invoices', icon: <Users size={22} />, path: '/login?portal=customer' },
 ];
 
@@ -108,6 +108,7 @@ export default function Landing() {
         </div>
         <div className="lp-nav-actions">
           <button onClick={() => navigate('/login?portal=owner')} className="lp-btn lp-btn--ghost">Sign In</button>
+          <button onClick={() => navigate('/login?portal=producer')} className="lp-btn lp-btn--ghost">Producer</button>
           <button onClick={() => navigate('/login?portal=customer')} className="lp-btn lp-btn--primary">Customer Portal</button>
         </div>
       </nav>
@@ -126,7 +127,7 @@ export default function Landing() {
               </button>
               <button onClick={() => navigate('/login?portal=customer')} className="lp-btn lp-btn--ghost lp-btn--lg">Customer login</button>
             </div>
-            <p className="lp-note" style={st(3)}>Built for small South Indian food makers. Runs on your own computer, no cloud account needed.</p>
+            <p className="lp-note" style={st(3)}>Illustrative figures; your workspace tracks its own orders, stock and invoices. Built for small South Indian food makers and runs on your own computer.</p>
           </div>
           <div className="lp-art" aria-hidden={false}>
             <div className="lp-stage">
@@ -262,18 +263,18 @@ export default function Landing() {
         {/* 5 — text LEFT */}
         <section {...slide(4)} data-side="left" data-theme="audit">
           <div className="lp-text">
-            <h2 style={st(0)}>Trace any invoice back to the flour.</h2>
+            <h2 style={st(0)}>Know what changed, and how the business is doing.</h2>
             <p className="lp-lede" style={st(1)}>
-              Audit Explorer walks backwards from an invoice through dispatch, finished goods and the production batch to the raw-material purchase behind it.
+              Review who changed important records in the Audit Log, then use Reports to check stock, GST, production, costing and collections.
             </p>
             <ul className="lp-facts">
               <li style={st(2)}>
                 <span className="lp-fact-ico"><Shield size={18} /></span>
-                <span className="lp-fact-text"><b>One invoice number is enough.</b> Enter it and follow the trail step by step.</span>
+                <span className="lp-fact-text"><b>A searchable audit log.</b> See the user, action, record and timestamp for each event.</span>
               </li>
               <li style={st(3)}>
                 <span className="lp-fact-ico"><FileText size={18} /></span>
-                <span className="lp-fact-text"><b>Reports you can hand over.</b> Sales, purchases, GST, stock, variance and collections, exported as PDF, Excel or CSV.</span>
+                <span className="lp-fact-text"><b>Business reports in one place.</b> Review stock, GST, production, costing and collections.</span>
               </li>
             </ul>
           </div>

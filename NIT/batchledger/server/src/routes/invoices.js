@@ -6,7 +6,7 @@ import { getProductStock } from '../utils/stock.js';
 import { audit } from '../utils/auditLog.js';
 
 const router = express.Router();
-router.use(authenticate);
+router.use(authenticate, authorize('ADMIN', 'SALESMAN'));
 
 router.get('/', async (req, res, next) => {
   try {

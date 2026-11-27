@@ -9,7 +9,7 @@ import { audit } from '../utils/auditLog.js';
 const router = express.Router();
 router.use(authenticate);
 
-router.get('/', async (req, res, next) => {
+router.get('/', authorize('ADMIN', 'SALESMAN', 'CUSTOMER'), async (req, res, next) => {
   try {
     if (req.user.role === 'CUSTOMER' && !req.user.customerId) {
       return res.status(403).json({ error: 'Customer account is not linked to a customer record.' });
@@ -24,7 +24,7 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', authorize('ADMIN', 'SALESMAN', 'CUSTOMER'), async (req, res, next) => {
   try {
     const o = await prisma.order.findUnique({
       where: { id: Number(req.params.id) },

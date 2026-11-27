@@ -27,34 +27,64 @@ async function main() {
   console.log('🌱 Seeding BatchLedger database...\n');
 
   // ── 1. USERS ────────────────────────────────────────────────────────────────
-  console.log('Creating users...');
+  console.log('Ensuring an initial administrator exists...');
   const hash = async (pw) => bcrypt.hash(pw, 12);
-
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@batchledger.com' },
-    update: {},
-    create: { name: 'Rajan (Admin)', email: 'admin@batchledger.com', passwordHash: await hash('Admin@123'), role: 'ADMIN' },
+  const legacyDemoEmails = [
+    'admin@batchledger.com',
+    'salesman@batchledger.com',
+    'supervisor@batchledger.com',
+    'auditor@batchledger.com',
+  ];
+  const adminEmail = process.env.INITIAL_ADMIN_EMAIL?.trim().toLowerCase();
+  const existingAdmin = await prisma.user.findFirst({
+    where: { role: 'ADMIN', isActive: true, email: { notIn: legacyDemoEmails } },
   });
+  let admin = existingAdmin;
 
-  const salesman = await prisma.user.upsert({
-    where: { email: 'salesman@batchledger.com' },
-    update: {},
-    create: { name: 'Murugan (Salesman)', email: 'salesman@batchledger.com', passwordHash: await hash('Sales@123'), role: 'SALESMAN' },
+  if (!admin) {
+    const adminName = process.env.INITIAL_ADMIN_NAME?.trim();
+    const adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
+    if (!adminName || adminName.length > 100 || !adminEmail
+      || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)
+      || !adminPassword || adminPassword.length < 12) {
+      throw new Error(
+        'No active administrator is configured. Set INITIAL_ADMIN_NAME (up to 100 characters), INITIAL_ADMIN_EMAIL (valid email), and INITIAL_ADMIN_PASSWORD (at least 12 characters), then run the seed again.'
+      );
+    }
+    if (legacyDemoEmails.includes(adminEmail)) {
+      throw new Error('INITIAL_ADMIN_EMAIL must not use a legacy demo account address.');
+    }
+
+    const existingAccount = await prisma.user.findUnique({ where: { email: adminEmail } });
+    if (existingAccount && existingAccount.role !== 'ADMIN') {
+      throw new Error('INITIAL_ADMIN_EMAIL is already assigned to a non-admin account.');
+    }
+
+    const passwordHash = await hash(adminPassword);
+    admin = await prisma.user.upsert({
+      where: { email: adminEmail },
+      update: {
+        name: adminName,
+        passwordHash,
+        isActive: true,
+        sessionVersion: { increment: 1 },
+      },
+      create: { name: adminName, email: adminEmail, passwordHash, role: 'ADMIN' },
+    });
+  }
+
+  await prisma.$transaction(async tx => {
+    const migration = await tx.systemConfig.findUnique({ where: { key: 'LEGACY_DEMO_USERS_DISABLED' } });
+    if (migration) return;
+    await tx.user.updateMany({
+      where: { email: { in: legacyDemoEmails }, isActive: true },
+      data: { isActive: false, sessionVersion: { increment: 1 } },
+    });
+    await tx.systemConfig.create({
+      data: { key: 'LEGACY_DEMO_USERS_DISABLED', value: 'true' },
+    });
   });
-
-  const supervisor = await prisma.user.upsert({
-    where: { email: 'supervisor@batchledger.com' },
-    update: {},
-    create: { name: 'Senthil (Production)', email: 'supervisor@batchledger.com', passwordHash: await hash('Prod@123'), role: 'PRODUCTION_SUPERVISOR' },
-  });
-
-  const auditor = await prisma.user.upsert({
-    where: { email: 'auditor@batchledger.com' },
-    update: {},
-    create: { name: 'Priya (Auditor)', email: 'auditor@batchledger.com', passwordHash: await hash('Audit@123'), role: 'AUDITOR' },
-  });
-
-  console.log('✓ Users created: admin, salesman, supervisor, auditor\n');
+  console.log(`✓ Administrator ready: ${admin.email}; legacy demo account migration complete.\n`);
 
   // ── 2. SYSTEM CONFIG ────────────────────────────────────────────────────────
   await prisma.systemConfig.upsert({ where: { key: 'BUSINESS_NAME' }, update: {}, create: { key: 'BUSINESS_NAME', value: 'Sri Murugan Snacks Pvt Ltd' } });
@@ -195,7 +225,7 @@ async function main() {
         productId: murukku.id,
         plannedOutput: 200,
         productionDate: new Date('2024-01-11'),
-        supervisorId: supervisor.id,
+        supervisorId: admin.id,
         status: 'PLANNED',
       },
     });
@@ -245,7 +275,7 @@ async function main() {
       let totalExpenseCost = new Decimal(0);
       for (const exp of expenses) {
         totalExpenseCost = totalExpenseCost.plus(exp.amount);
-        await tx.productionExpense.create({ data: { productionRunId: prodRun.id, expenseType: exp.expenseType, description: exp.description, amount: exp.amount, createdById: supervisor.id } });
+        await tx.productionExpense.create({ data: { productionRunId: prodRun.id, expenseType: exp.expenseType, description: exp.description, amount: exp.amount, createdById: admin.id } });
       }
 
       // Yield variance
@@ -286,7 +316,7 @@ async function main() {
         orderDate: new Date('2024-01-12'),
         requiredDate: new Date('2024-01-13'),
         totalAmount: 150 * 50,
-        createdById: salesman.id,
+        createdById: admin.id,
         status: 'PENDING_APPROVAL',
         items: { create: [{ productId: murukku.id, orderedQty: 150, availableQty: availableA, shortageQty: shortageA, unitPrice: 50, totalPrice: 150 * 50 }] },
       },
@@ -382,7 +412,7 @@ async function main() {
         orderDate: new Date('2024-01-14'),
         requiredDate: new Date('2024-01-15'),
         totalAmount: 120 * 50,
-        createdById: salesman.id,
+        createdById: admin.id,
         status: 'PENDING_APPROVAL',
         notes: `Stock shortage: only ${availableB} available of 120 ordered`,
         items: {
@@ -470,11 +500,7 @@ async function main() {
   console.log(`Oil variance:   +${oilVar?.variancePct?.toFixed(1)}%   (Expected: +5%)  ${oilVar?.isFlagged ? '🚨 FLAGGED' : '✓ OK'}`);
 
   console.log('\n✅ Seed complete! BatchLedger benchmark scenario loaded.\n');
-  console.log('📋 CREDENTIALS:');
-  console.log('  Admin:      admin@batchledger.com      / Admin@123');
-  console.log('  Salesman:   salesman@batchledger.com   / Sales@123');
-  console.log('  Supervisor: supervisor@batchledger.com / Prod@123');
-  console.log('  Auditor:    auditor@batchledger.com    / Audit@123');
+  console.log(`Log in with the configured administrator account: ${admin.email}`);
 }
 
 // Patch AuditLog model for seed (add notes field workaround)

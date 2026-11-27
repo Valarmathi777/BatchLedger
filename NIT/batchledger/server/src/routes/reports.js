@@ -1,9 +1,9 @@
 import express from 'express';
 import prisma from '../utils/prisma.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
-router.use(authenticate);
+router.use(authenticate, authorize('ADMIN', 'AUDITOR'));
 
 // GET /api/reports/sales?from=&to=
 router.get('/sales', async (req, res, next) => {

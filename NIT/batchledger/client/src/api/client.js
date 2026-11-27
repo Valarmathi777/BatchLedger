@@ -3,25 +3,18 @@ import axios from 'axios';
 const api = axios.create({
   baseURL: '/api',
   timeout: 15000,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
-});
-
-// Attach JWT token to every request
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('bl_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
 });
 
 // Handle 401 globally
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
-      const customerLogin = /"role"\s*:\s*"CUSTOMER"/.test(localStorage.getItem('bl_user') || '');
-      localStorage.removeItem('bl_token');
-      localStorage.removeItem('bl_user');
-      window.location.href = customerLogin ? '/login?portal=customer' : '/login';
+    const url = err.config?.url || '';
+    const isAuthRequest = ['/auth/login', '/auth/register-customer', '/auth/register-seller', '/auth/register-admin', '/auth/setup-status', '/auth/me'].some(path => url.startsWith(path));
+    if (err.response?.status === 401 && !isAuthRequest) {
+      window.location.href = window.location.pathname === '/customer' ? '/login?portal=customer' : '/login';
     }
     return Promise.reject(err);
   }
@@ -31,8 +24,11 @@ export default api;
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 export const authApi = {
-  login: (email, password) => api.post('/auth/login', { email, password }),
+  login: (email, password, portal) => api.post('/auth/login', { email, password, portal }),
   registerCustomer: (data) => api.post('/auth/register-customer', data),
+  registerSeller: (data) => api.post('/auth/register-seller', data),
+  registerAdmin: (data) => api.post('/auth/register-admin', data),
+  setupStatus: () => api.get('/auth/setup-status'),
   me: () => api.get('/auth/me'),
   logout: () => api.post('/auth/logout'),
 };
@@ -150,4 +146,40 @@ export const usersApi = {
 // ── Audit ────────────────────────────────────────────────────────────────────
 export const auditApi = {
   list: (params) => api.get('/audit', { params }),
+};
+
+export const marketplaceApi = {
+  producers: () => api.get('/marketplace/producers'),
+  products: (params) => api.get('/marketplace/products', { params }),
+  deliveryCharge: () => api.get('/marketplace/delivery-charge'),
+  orders: () => api.get('/marketplace/orders'),
+  createOrder: (data) => api.post('/marketplace/orders', data),
+};
+
+export const sellerApi = {
+  dashboard: () => api.get('/seller/dashboard'),
+  products: () => api.get('/seller/products'),
+  updateProduct: (id, data) => api.patch(`/seller/products/${id}`, data),
+  orders: () => api.get('/seller/orders'),
+  updateOrderStatus: (id, status, data = {}) => api.patch(`/seller/orders/${id}/status`, { status, ...data }),
+  inventory: () => api.get('/seller/inventory'),
+  production: () => api.get('/seller/production'),
+  invoices: () => api.get('/seller/invoices'),
+  createProduct: (data) => api.post('/seller/products', data),
+  materials: () => api.get('/seller/materials'),
+  createMaterial: (data) => api.post('/seller/materials', data),
+  receiveMaterial: (id, data) => api.post(`/seller/materials/${id}/receipts`, data),
+  boms: () => api.get('/seller/boms'),
+  createBom: (data) => api.post('/seller/boms', data),
+};
+
+export const messagesApi = {
+  threads: () => api.get('/messages/threads'),
+  send: (data) => api.post('/messages', data),
+};
+
+export const notificationsApi = {
+  list: () => api.get('/notifications'),
+  markRead: (id) => api.patch(`/notifications/${id}/read`),
+  markAllRead: () => api.patch('/notifications/read-all'),
 };

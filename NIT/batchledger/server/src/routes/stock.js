@@ -1,9 +1,9 @@
 import express from 'express';
 import prisma from '../utils/prisma.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
-router.use(authenticate);
+router.use(authenticate, authorize('ADMIN', 'AUDITOR', 'PRODUCTION_SUPERVISOR'));
 
 // GET /api/stock/materials – current raw material stock
 router.get('/materials', async (req, res, next) => {

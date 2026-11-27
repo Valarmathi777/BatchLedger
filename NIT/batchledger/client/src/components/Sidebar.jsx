@@ -5,6 +5,7 @@ import {
   LogOut, ChevronDown, AlertTriangle, Boxes,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import toast from 'react-hot-toast';
 
 const navGroups = [
   {
@@ -55,8 +56,12 @@ export default function Sidebar() {
   const navigate = useNavigate();
 
   const handleLogout = async () => {
-    await logout();
-    navigate('/login');
+    try {
+      await logout();
+      navigate('/login');
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Could not sign out. Please try again.');
+    }
   };
 
   const roleColors = {

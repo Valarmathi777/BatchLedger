@@ -6,11 +6,12 @@ import { moveMaterialStock, moveProductStock, getMaterialStock } from '../utils/
 import { audit } from '../utils/auditLog.js';
 
 const router = express.Router();
-router.use(authenticate);
+router.use(authenticate, authorize('ADMIN', 'PRODUCTION_SUPERVISOR', 'SELLER'));
 
 router.get('/', async (req, res, next) => {
   try {
     const list = await prisma.productionRun.findMany({
+      where: req.user.role === 'SELLER' ? { product: { sellerId: req.user.id }, orderId: { not: null } } : {},
       include: { product: true, bom: true, supervisor: { select: { name: true } }, issues: { include: { material: true } }, expenses: true, variances: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -20,8 +21,11 @@ router.get('/', async (req, res, next) => {
 
 router.get('/:id', async (req, res, next) => {
   try {
-    const run = await prisma.productionRun.findUnique({
-      where: { id: Number(req.params.id) },
+    const run = await prisma.productionRun.findFirst({
+      where: {
+        id: Number(req.params.id),
+        ...(req.user.role === 'SELLER' ? { product: { sellerId: req.user.id }, orderId: { not: null } } : {}),
+      },
       include: { product: true, bom: { include: { items: { include: { material: true } } } }, supervisor: { select: { name: true } }, issues: { include: { material: true } }, expenses: true, variances: true },
     });
     if (!run) return res.status(404).json({ error: 'Production run not found' });
@@ -41,17 +45,49 @@ router.post('/', authorize('ADMIN', 'PRODUCTION_SUPERVISOR'), async (req, res, n
 });
 
 // Complete a production run – issues materials, adds finished goods, computes variances
-router.post('/:id/complete', authorize('ADMIN', 'PRODUCTION_SUPERVISOR'), async (req, res, next) => {
+router.post('/:id/complete', authorize('ADMIN', 'PRODUCTION_SUPERVISOR', 'SELLER'), async (req, res, next) => {
   try {
     const runId = Number(req.params.id);
-    const { actualOutput, damagedQty = 0, issues, expenses = [] } = req.body;
+    const { actualOutput: rawActualOutput, damagedQty: rawDamagedQty = 0, issues, expenses = [] } = req.body;
+    const actualOutput = Number(rawActualOutput);
+    const damagedQty = Number(rawDamagedQty);
     // issues: [{ materialId, actualQty, returnedQty }]
+    if (!Number.isInteger(runId) || runId < 1
+      || !Number.isFinite(actualOutput) || actualOutput < 0
+      || !Number.isFinite(damagedQty) || damagedQty < 0
+      || !Array.isArray(issues) || !Array.isArray(expenses)) {
+      return res.status(400).json({ error: 'Production output, damaged quantity, issues, and expenses must be valid.' });
+    }
+    if (issues.some(issue => !issue || typeof issue !== 'object'
+      || !Number.isInteger(Number(issue.materialId))
+      || !Number.isFinite(Number(issue.actualQty)) || Number(issue.actualQty) < 0
+      || !Number.isFinite(Number(issue.returnedQty || 0)) || Number(issue.returnedQty || 0) < 0
+      || Number(issue.returnedQty || 0) > Number(issue.actualQty))) {
+      return res.status(400).json({ error: 'Material issue and return quantities must be valid and returns cannot exceed usage.' });
+    }
+    if (expenses.some(expense => !expense || typeof expense !== 'object'
+      || !['LABOUR', 'POWER', 'GAS', 'OTHER'].includes(expense.expenseType)
+      || !Number.isFinite(Number(expense.amount)) || Number(expense.amount) < 0
+      || (expense.description !== undefined && (typeof expense.description !== 'string' || expense.description.length > 200)))) {
+      return res.status(400).json({ error: 'Production expenses must have a valid type and non-negative amount.' });
+    }
 
     const existingRun = await prisma.productionRun.findUnique({
       where: { id: runId },
-      include: { bom: { include: { items: { include: { material: true } } } } },
+      include: { product: true, bom: { include: { items: { include: { material: true } } } } },
     });
     if (!existingRun) return res.status(404).json({ error: 'Production run not found' });
+    if (req.user.role === 'SELLER') {
+      if (existingRun.orderId === null || existingRun.product.sellerId !== req.user.id) {
+        return res.status(404).json({ error: 'Production run not found' });
+      }
+      const allowedMaterials = new Set(existingRun.bom.items
+        .filter(item => item.material.sellerId === req.user.id)
+        .map(item => item.materialId));
+      if (issues.some(issue => !allowedMaterials.has(Number(issue.materialId)))) {
+        return res.status(400).json({ error: 'Production issues must use materials assigned to this seller and the run BOM.' });
+      }
+    }
     if (existingRun.status === 'COMPLETED') return res.status(400).json({ error: 'Production run already completed' });
 
     const result = await prisma.$transaction(async (tx) => {
@@ -60,14 +96,17 @@ router.post('/:id/complete', authorize('ADMIN', 'PRODUCTION_SUPERVISOR'), async 
       const varianceRecords = [];
 
       for (const issue of issues) {
-        const matLedger = await getMaterialStock(issue.materialId, tx);
-        const netQty = new Decimal(issue.actualQty).minus(issue.returnedQty || 0);
+        const materialId = Number(issue.materialId);
+        const actualQty = Number(issue.actualQty);
+        const returnedQty = Number(issue.returnedQty || 0);
+        const matLedger = await getMaterialStock(materialId, tx);
+        const netQty = new Decimal(actualQty).minus(returnedQty);
         const totalCost = netQty.times(matLedger.avgCost);
         totalMaterialCost = totalMaterialCost.plus(totalCost);
 
         // Issue materials from stock
         await moveMaterialStock({
-          materialId: issue.materialId,
+          materialId,
           qty: -netQty.toNumber(),
           unitCost: matLedger.avgCost,
           movementType: 'PRODUCTION_ISSUE',
@@ -76,16 +115,18 @@ router.post('/:id/complete', authorize('ADMIN', 'PRODUCTION_SUPERVISOR'), async 
           notes: `Batch ${existingRun.batchNo}`,
         }, tx);
 
-        const bomItem = existingRun.bom.items.find(b => b.materialId === issue.materialId);
-        const standardQty = bomItem ? bomItem.quantity : 0;
+        const bomItem = existingRun.bom.items.find(b => b.materialId === materialId);
+        const standardQty = bomItem && existingRun.bom.batchSize > 0
+          ? bomItem.quantity * existingRun.plannedOutput / existingRun.bom.batchSize
+          : 0;
         const variancePct = standardQty > 0 ? ((netQty.toNumber() - standardQty) / standardQty) * 100 : 0;
 
         issueRecords.push({
           productionRunId: runId,
-          materialId: issue.materialId,
+          materialId,
           standardQty,
-          actualQty: issue.actualQty,
-          returnedQty: issue.returnedQty || 0,
+          actualQty,
+          returnedQty,
           netQty: netQty.toNumber(),
           unitCost: matLedger.avgCost,
           totalCost: totalCost.toNumber(),
@@ -111,7 +152,7 @@ router.post('/:id/complete', authorize('ADMIN', 'PRODUCTION_SUPERVISOR'), async 
       for (const exp of expenses) {
         totalExpenseCost = totalExpenseCost.plus(exp.amount);
         await tx.productionExpense.create({
-          data: { productionRunId: runId, expenseType: exp.expenseType, description: exp.description, amount: exp.amount, createdById: req.user.id },
+          data: { productionRunId: runId, expenseType: exp.expenseType, description: exp.description, amount: Number(exp.amount), createdById: req.user.id },
         });
       }
 

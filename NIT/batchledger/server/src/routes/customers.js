@@ -3,7 +3,7 @@ import prisma from '../utils/prisma.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
-router.use(authenticate);
+router.use(authenticate, authorize('ADMIN', 'SALESMAN'));
 
 const select = { id: true, code: true, name: true, gstNumber: true, state: true, stateCode: true, address: true, phone: true, email: true, creditLimit: true, isActive: true };
 
