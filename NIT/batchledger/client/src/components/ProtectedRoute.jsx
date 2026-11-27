@@ -7,7 +7,14 @@ export default function ProtectedRoute({ children, roles }) {
 
   if (loading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-500" /></div>;
   if (authError) return <div role="alert" className="flex min-h-screen items-center justify-center p-6 text-center text-red-700">{authError}</div>;
-  if (!user) return <Navigate to={location.pathname === '/customer' ? '/login?portal=customer' : '/login'} state={{ from: location }} replace />;
+  if (!user) {
+    const portal = location.pathname.startsWith('/customer')
+      ? 'customer'
+      : location.pathname.startsWith('/seller')
+        ? 'producer'
+        : 'owner';
+    return <Navigate to={`/login?portal=${portal}`} state={{ from: location }} replace />;
+  }
   if (roles && !roles.includes(user.role)) return <Navigate to={user.role === 'CUSTOMER' ? '/customer' : user.role === 'SELLER' ? '/seller' : '/app/dashboard'} replace />;
 
   return children;

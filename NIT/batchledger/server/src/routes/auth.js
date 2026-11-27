@@ -2,11 +2,20 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { body, validationResult } from 'express-validator';
+import rateLimit from 'express-rate-limit';
 import prisma from '../utils/prisma.js';
 import { generateToken, authenticate, setSessionCookie, clearSessionCookie } from '../middleware/auth.js';
 import { audit } from '../utils/auditLog.js';
 
 const router = express.Router();
+const loginAttemptLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { error: 'Too many failed sign-in attempts. Try again in 15 minutes.' },
+});
 
 const legacyDemoEmails = [
   'admin@batchledger.com',
@@ -203,6 +212,7 @@ router.post('/register-customer',
 
 // POST /api/auth/login
 router.post('/login',
+  loginAttemptLimiter,
   body('email').isEmail().normalizeEmail(),
   body('password').notEmpty(),
   body('portal').optional().isIn(['owner', 'producer', 'customer']),
@@ -225,7 +235,7 @@ router.post('/login',
         !portal
         || (portal === 'customer' && user.role === 'CUSTOMER')
         || (portal === 'owner' && ['ADMIN', 'SALESMAN', 'PRODUCTION_SUPERVISOR', 'AUDITOR'].includes(user.role))
-        || (portal === 'producer' && ['SELLER', 'PRODUCTION_SUPERVISOR'].includes(user.role));
+        || (portal === 'producer' && user.role === 'SELLER');
       if (!roleMatchesPortal) {
         return res.status(403).json({ error: `This account cannot sign in to the ${portal} portal.` });
       }

@@ -14,7 +14,12 @@ api.interceptors.response.use(
     const url = err.config?.url || '';
     const isAuthRequest = ['/auth/login', '/auth/register-customer', '/auth/register-seller', '/auth/register-admin', '/auth/setup-status', '/auth/me'].some(path => url.startsWith(path));
     if (err.response?.status === 401 && !isAuthRequest) {
-      window.location.href = window.location.pathname === '/customer' ? '/login?portal=customer' : '/login';
+      const portal = window.location.pathname.startsWith('/customer')
+        ? 'customer'
+        : window.location.pathname.startsWith('/seller')
+          ? 'producer'
+          : 'owner';
+      window.location.href = `/login?portal=${portal}`;
     }
     return Promise.reject(err);
   }

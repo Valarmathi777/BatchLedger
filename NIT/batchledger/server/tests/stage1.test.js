@@ -147,6 +147,16 @@ describe('Authentication', () => {
     expect(r.body.role).toBe('ADMIN');
   });
 
+  test('Producer portal rejects staff accounts that belong in the owner portal', async () => {
+    const supervisor = await prisma.user.findUnique({
+      where: { id: staffUserIdsByRole.PRODUCTION_SUPERVISOR },
+      select: { email: true },
+    });
+    const response = await request(app).post('/api/auth/login')
+      .send({ email: supervisor.email, password: 'TestAccount@123', portal: 'producer' });
+    expect(response.status).toBe(403);
+  });
+
   test('Unauthenticated request blocked', async () => {
     const r = await request(app).get('/api/users');
     expect(r.status).toBe(401);
@@ -395,6 +405,20 @@ describe('Customer portal', () => {
     const loginTwo = await request(app).post('/api/auth/login').send({ email: two.body.email, password: 'SellerTwo@123' });
     sellerOneCookie = loginOne.headers['set-cookie'][0].split(';')[0];
     sellerTwoCookie = loginTwo.headers['set-cookie'][0].split(';')[0];
+  });
+
+  test('Customer and seller sessions cannot cross into other role APIs', async () => {
+    const customerSellerAccess = await request(app).get('/api/seller/dashboard').set('Cookie', customerCookie);
+    const customerStaffAccess = await request(app).get('/api/users').set('Cookie', customerCookie);
+    const sellerStaffAccess = await request(app).get('/api/users').set('Cookie', sellerOneCookie);
+    const sellerCustomerAccess = await request(app).post('/api/marketplace/orders')
+      .set('Cookie', sellerOneCookie)
+      .send({});
+
+    expect(customerSellerAccess.status).toBe(403);
+    expect(customerStaffAccess.status).toBe(403);
+    expect(sellerStaffAccess.status).toBe(403);
+    expect(sellerCustomerAccess.status).toBe(403);
   });
 
   test('producer can add a priced product and update the public catalog price', async () => {
@@ -715,5 +739,16 @@ describe('Admin-managed staff accounts', () => {
       .set('Cookie', adminCookie)
       .send({ isActive: false });
     expect(response.status).toBe(400);
+  });
+
+  test('Repeated failed sign-ins are rate limited', async () => {
+    let response;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      response = await request(app).post('/api/auth/login')
+        .send({ email: adminEmail, password: `incorrect-${attempt}` });
+      if (response.status === 429) break;
+      expect(response.status).toBe(401);
+    }
+    expect(response.status).toBe(429);
   });
 });
